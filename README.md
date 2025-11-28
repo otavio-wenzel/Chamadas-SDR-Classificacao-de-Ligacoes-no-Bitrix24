@@ -1,3 +1,4 @@
+````markdown
 # Chamadas SDR – Classificação de Ligações no Bitrix24
 
 Aplicação leve em HTML/JS que roda dentro do **CALL_CARD** do Bitrix24 e
@@ -71,15 +72,21 @@ Elementos de UI:
 ### 3.1. Inicialização
 
 1. Carrega o SDK do Bitrix:
+   ```js
    BX24.init(function () { ... });
+````
 
 2. Obtém o usuário logado:
 
+   ```js
    BX24.callMethod('user.current', {}, ...);
-   
+   ```
+
 3. Verifica se o usuário é **admin**:
 
+   ```js
    if (BX24.isAdmin && BX24.isAdmin()) { ... }
+   ```
 
    * Se for admin, o botão azul `#installBtn` é exibido.
    * Se não for admin, o botão permanece oculto.
@@ -91,6 +98,7 @@ Elementos de UI:
 
 A função `loadLastCallAndHeader` faz:
 
+```js
 BX24.callMethod('crm.activity.list', {
   order:  { "END_TIME": "DESC" },
   filter: {
@@ -100,6 +108,7 @@ BX24.callMethod('crm.activity.list', {
   },
   select: ["ID", "SUBJECT", "END_TIME", "TYPE_ID", "RESPONSIBLE_ID", "COMPLETED"]
 }, ...);
+```
 
 * Pega o **primeiro item** da lista (`data[0]`) como **última call concluída**.
 
@@ -116,7 +125,9 @@ BX24.callMethod('crm.activity.list', {
 
 * Monta o texto:
 
+  ```txt
   Última ligação concluída: Nome do contato – +550000000000
+  ```
 
   e exibe em `#lastCallInfo`.
 
@@ -131,6 +142,7 @@ Quando o usuário clica no botão verde:
 
 3. Com o `activityId` em mãos, executa:
 
+   ```js
    BX24.callMethod('crm.activity.update', {
      id: activityId,
      fields: {
@@ -138,6 +150,7 @@ Quando o usuário clica no botão verde:
        DESCRIPTION: result
      }
    }, ...);
+   ```
 
 4. Exibe um `alert` informando que o status foi salvo com sucesso.
 
@@ -149,12 +162,15 @@ O botão **“Registrar / atualizar CALL_CARD”**:
 
 1. Executa um `placement.unbind` para limpar associações antigas:
 
+   ```js
    BX24.callMethod('placement.unbind', {
      PLACEMENT: 'CALL_CARD'
    }, ...);
+   ```
 
 2. Em seguida, faz o bind do handler atual:
 
+   ```js
    var handlerUrl = window.location.href.split('#')[0].split('?')[0];
 
    BX24.callMethod('placement.bind', {
@@ -163,6 +179,7 @@ O botão **“Registrar / atualizar CALL_CARD”**:
      TITLE: 'Resultado da chamada',
      DESCRIPTION: 'Classificação de cada ligação'
    }, ...);
+   ```
 
 > **Importante:**
 > Esse botão só aparece se `BX24.isAdmin()` retornar `true`. Qualquer usuário
@@ -181,8 +198,10 @@ Para facilitar o uso em relatórios:
 
 Exemplo de dados gravados:
 
+```txt
 DESCRIÇÃO  = "REUNIÃO AGENDADA"
 RESULT_VALUE = "REUNIÃO AGENDADA"
+```
 
 No BI, você pode:
 
@@ -257,12 +276,14 @@ permissões mínimas:
 
 No final da inicialização há:
 
+```js
 setInterval(function () {
   log('Auto-refresh (2min) da última ligação concluída...');
   loadLastCallAndHeader(function (activityId) {
     log('Auto-refresh atualizado. Atividade ID = ' + activityId);
   });
 }, 120000); // 2 minutos
+```
 
 * Para desativar o auto-refresh, basta **comentar** esse bloco.
 * Para mudar o intervalo, altere `120000` para outro valor (em milissegundos).
@@ -275,9 +296,11 @@ Opções:
 
 1. **Esconder via CSS**:
 
+   ```css
    #debug {
      display: none;
    }
+   ```
 
 2. **Remover completamente**:
 
@@ -314,9 +337,13 @@ Basta editar as `<option>` existentes ou adicionar novas, lembrando que:
 
 Adapte esta seção conforme a política da sua empresa (MIT, proprietária etc.).
 
+```txt
 Este projeto é de uso interno. A redistribuição externa deve seguir as
 políticas de segurança e confidencialidade da organização.
+```
 
 ---
 
+```
 ::contentReference[oaicite:0]{index=0}
+```
