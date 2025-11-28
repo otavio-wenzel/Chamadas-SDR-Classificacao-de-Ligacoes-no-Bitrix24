@@ -1,4 +1,3 @@
-````markdown
 # Chamadas SDR – Classificação de Ligações no Bitrix24
 
 Aplicação leve em HTML/JS que roda dentro do **CALL_CARD** do Bitrix24 e
@@ -74,7 +73,6 @@ Elementos de UI:
 1. Carrega o SDK do Bitrix:
    ```js
    BX24.init(function () { ... });
-````
 
 2. Obtém o usuário logado:
 
