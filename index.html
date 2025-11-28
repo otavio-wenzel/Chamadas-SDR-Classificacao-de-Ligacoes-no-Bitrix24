@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Status das ligações</title>
+  <script src="https://api.bitrix24.com/api/v1/"></script>
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      font-size: 14px;
+    }
+
+    /* Container central para deixar tudo mais organizado e responsivo */
+    .app-container {
+      max-width: 760px;
+      margin: 16px auto;
+      padding: 0 16px 16px;
+      box-sizing: border-box;
+    }
+
+    label, select, button {
+      display: block;
+      margin-bottom: 8px;
+      width: 100%;
+    }
+
+    select, button {
+      padding: 6px 8px;
+      box-sizing: border-box;
+    }
+
+    button { cursor: pointer; }
+
+    #installBtn {
+      background: #0057d8;
+      color: #fff;
+      border: none;
+      margin-bottom: 18px;
+      font-weight: 600;
+    }
+
+    #refreshBtn {
+      background: #888;
+      color: #fff;
+      border: none;
+      margin-top: 8px;
+    }
+
+    #saveBtn {
+      background: #00a65a;
+      color: #fff;
+      border: none;
+      margin-top: 10px;
+      font-weight: 600;
+    }
+
+    #debug {
+      margin-top: 12px;
+      padding: 6px;
+      border: 1px solid #ccc;
+      max-height: 260px;
+      overflow: auto;
+      font-size: 11px;
+      white-space: pre-wrap;
+      background: #f9f9f9;
+    }
+
+    /* Card da última ligação */
+    #lastCallCard {
+      margin-top: 10px;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      text-align: center;
+    }
+
+    .last-call-label {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 4px;
+    }
+
+    .last-call-value {
+      font-size: 16px;
+      font-weight: 600;
+      color: #222;
+    }
+
+    #lastCallName {
+      display: inline;
+    }
+
+    #lastCallPhone {
+      display: inline;
+      margin-left: 4px;
+      color: #333;
+    }
+
+    /* Centralizar o texto do label do resultado */
+    .center-label {
+      text-align: center;
+      font-weight: 600;
+      margin-top: 4px;
+      margin-bottom: 4px;
+    }
+
+    /* Em telas bem estreitas, dá um espacinho melhor */
+    @media (max-width: 480px) {
+      #lastCallCard {
+        padding: 10px 8px;
+      }
+      .last-call-value {
+        font-size: 15px;
+      }
+    }
+
+    /* Desabilita a visibilidade das logs, mas apagando este componente é util para fazer depuração*/
+    #debug {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- ADMIN: usar o botão azul apenas para registrar/atualizar o app no CALL_CARD -->
+    <button id="installBtn">Registrar / atualizar CALL_CARD</button>
+
+    <!-- Card da última ligação -->
+    <div id="lastCallCard">
+      <div class="last-call-label">Última ligação concluída:</div>
+      <div class="last-call-value">
+        <span id="lastCallName">(carregando...)</span>
+        <span id="lastCallPhone"></span>
+      </div>
+      <button id="refreshBtn">Atualizar última ligação</button>
+    </div>
+
+    <!-- Resultado da chamada -->
+    <label for="callResult" class="center-label">Resultado da chamada:</label>
+    <select id="callResult">
+      <option value="">-- selecione --</option>
+      <option value="REUNIÃO AGENDADA">REUNIÃO AGENDADA</option>
+      <option value="FALEI COM SECRETÁRIA">FALEI COM SECRETÁRIA</option>
+      <option value="FOLLOW-UP">FOLLOW-UP</option>
+      <option value="RETORNO POR E-MAIL">RETORNO POR E-MAIL</option>
+      <option value="NÃO TEM INTERESSE">NÃO TEM INTERESSE</option>
+      <option value="NÃO FAZ LOCAÇÃO">NÃO FAZ LOCAÇÃO</option>
+      <option value="CAIXA POSTAL">CAIXA POSTAL</option>
+    </select>
+
+    <button id="saveBtn">Salvar resultado desta ligação</button>
+
+    <!-- Logs (você ajusta depois, deixei igual) -->
+    <div id="debug"></div>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Utilitários de log
+    // -----------------------------------------------------------------------
+    function log(msg, obj) {
+      var dbg = document.getElementById('debug');
+      if (!dbg) return;
+      var text = '[' + new Date().toISOString().substring(11, 19) + '] ' + msg;
+      if (obj !== undefined) {
+        try {
+          text += ' ' + JSON.stringify(obj, null, 2);
+        } catch (e) {}
+      }
+      dbg.textContent += text + "\n";
+    }
+
+    // URL base do app (sem query / hash) – usada no placement.bind
+    function getHandlerUrl() {
+      var href = window.location.href;
+      href = href.split('#')[0].split('?')[0];
+      return href;
+    }
+
+    // Guarda o ID do usuário logado em memória
+    var CURRENT_USER_ID  = null;
+    var LAST_ACTIVITY_ID = null;  // última call concluída para header + gravação
+
+    // Busca (ou reaproveita) o user.current
+    function getCurrentUserId(callback) {
+      if (CURRENT_USER_ID) {
+        callback(CURRENT_USER_ID);
+        return;
+      }
+
+      log('Buscando usuário atual (user.current)...');
+      BX24.callMethod('user.current', {}, function (res) {
+        if (res.error()) {
+          log('user.current ERRO', res.error());
+          alert('Erro ao obter usuário atual: ' + res.error());
+          return;
+        }
+        var data = res.data();
+        CURRENT_USER_ID = data.ID;
+        log('user.current SUCESSO, ID = ' + CURRENT_USER_ID, data);
+        callback(CURRENT_USER_ID);
+      });
+    }
+
+    // Atualiza a mensagem principal do card (sem telefone)
+    function setLastCallMessage(msg) {
+      var nameEl  = document.getElementById('lastCallName');
+      var phoneEl = document.getElementById('lastCallPhone');
+      if (!nameEl || !phoneEl) return;
+
+      nameEl.textContent  = msg || '';
+      phoneEl.textContent = '';
+    }
+
+    // Atualiza nome + telefone da última ligação
+    function updateLastCallHeader(name, phone) {
+      var nameEl  = document.getElementById('lastCallName');
+      var phoneEl = document.getElementById('lastCallPhone');
+      if (!nameEl || !phoneEl) return;
+
+      nameEl.textContent  = name || '(sem nome)';
+      phoneEl.textContent = phone ? (' – ' + phone) : '';
+    }
+
+    function buildContactNameFromEntity(entityData, entityType) {
+      if (!entityData) return null;
+
+      if (entityType === 'CONTACT') {
+        var n  = (entityData.NAME || '').trim();
+        var ln = (entityData.LAST_NAME || '').trim();
+        var full = (n + ' ' + ln).trim();
+        return full || entityData.FULL_NAME || null;
+      }
+
+      if (entityType === 'COMPANY') {
+        return entityData.TITLE || entityData.COMPANY_TITLE || null;
+      }
+
+      if (entityType === 'LEAD') {
+        return entityData.TITLE ||
+          ((entityData.NAME || '') + ' ' + (entityData.LAST_NAME || '')).trim() ||
+          null;
+      }
+
+      return null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Carrega a última call concluída e atualiza o cabeçalho
+    // Usa crm.activity.get (COMMUNICATIONS) e, se não tiver, cai pro voximplant.statistic.get
+    // -----------------------------------------------------------------------
+    function loadLastCallAndHeader(callback) {
+      getCurrentUserId(function(userId) {
+        log('Buscando última CALL concluída para cabeçalho + gravação. USER_ID = ' + userId);
+
+        BX24.callMethod('crm.activity.list', {
+          order: { "END_TIME": "DESC" },
+          filter: {
+            "TYPE_ID": 2,
+            "RESPONSIBLE_ID": userId,
+            "COMPLETED": "Y"
+          },
+          select: [
+            "ID",
+            "SUBJECT",
+            "END_TIME",
+            "TYPE_ID",
+            "RESPONSIBLE_ID",
+            "COMPLETED"
+          ]
+        }, function (resList) {
+          if (resList.error()) {
+            log('crm.activity.list ERRO', resList.error());
+            setLastCallMessage('Não foi possível carregar a última ligação.');
+            if (callback) callback(null);
+            return;
+          }
+
+          var data = resList.data();
+          log('crm.activity.list SUCESSO (última concluída)', data);
+
+          if (!data || !data.length) {
+            setLastCallMessage('Nenhuma ligação concluída encontrada para este usuário.');
+            if (callback) callback(null);
+            return;
+          }
+
+          var lastActivity = data[0];
+          var activityId   = lastActivity.ID;
+          LAST_ACTIVITY_ID = activityId;
+
+          log('Última ligação concluída encontrada. ID = ' + activityId, lastActivity);
+
+          // Função comum para montar o header final
+          function finalizeHeader(name, phone) {
+            updateLastCallHeader(name, phone);
+          }
+
+          // 1º tentativa: crm.activity.get para achar COMMUNICATIONS
+          BX24.callMethod('crm.activity.get', { id: activityId }, function(resAct) {
+            if (resAct.error()) {
+              log('crm.activity.get ERRO', resAct.error());
+              // Vamos tentar via telefonia mesmo assim
+              return fallbackFromTelephony();
+            }
+
+            var actFull = resAct.data();
+            var comms   = actFull && actFull.COMMUNICATIONS;
+            var phone   = null;
+            var entityType = null;
+            var entityId   = null;
+
+            if (comms && comms.length) {
+              phone      = comms[0].VALUE || null;
+              entityType = comms[0].ENTITY_TYPE || null;
+              entityId   = comms[0].ENTITY_ID   || null;
+
+              // Se vier apenas ENTITY_TYPE_ID numérico
+              if (!entityType && comms[0].ENTITY_TYPE_ID) {
+                var typeId = comms[0].ENTITY_TYPE_ID;
+                if (typeId == 1) entityType = 'LEAD';
+                else if (typeId == 3) entityType = 'CONTACT';
+                else if (typeId == 4) entityType = 'COMPANY';
+              }
+            }
+
+            if (!phone && !entityType && !entityId) {
+              log('COMMUNICATIONS ausentes ou sem entidade. ENTITY_TYPE/ID ausentes.', comms);
+              return fallbackFromTelephony();
+            }
+
+            // Se temos entidade, buscamos o nome.
+            if (entityType && entityId) {
+              var method = null;
+              if (entityType === 'CONTACT') method = 'crm.contact.get';
+              else if (entityType === 'COMPANY') method = 'crm.company.get';
+              else if (entityType === 'LEAD') method = 'crm.lead.get';
+
+              if (!method) {
+                log('Tipo de entidade não suportado para exibir nome (via COMMUNICATIONS): ' + entityType);
+                finalizeHeader(null, phone);
+                if (callback) callback(activityId);
+                return;
+              }
+
+              BX24.callMethod(method, { id: entityId }, function(resEntity) {
+                if (resEntity.error()) {
+                  log(method + ' ERRO', resEntity.error());
+                  finalizeHeader(null, phone);
+                } else {
+                  var entityData = resEntity.data();
+                  var name = buildContactNameFromEntity(entityData, entityType);
+                  log('Entidade carregada para cabeçalho (via COMMUNICATIONS) ' +
+                      '(' + entityType + ' #' + entityId + '): ' + name, entityData);
+                  finalizeHeader(name, phone);
+                }
+                if (callback) callback(activityId);
+              });
+
+            } else {
+              // Sem entidade, mas temos telefone → mostra só telefone
+              finalizeHeader(null, phone);
+              if (callback) callback(activityId);
+            }
+          });
+
+          // 2ª tentativa: se não achou nada em COMMUNICATIONS, usa voximplant.statistic.get
+          function fallbackFromTelephony() {
+            log('Tentando obter dados via voximplant.statistic.get (fallback)...');
+
+            BX24.callMethod('voximplant.statistic.get', {
+              FILTER: { "CRM_ACTIVITY_ID": activityId }
+            }, function(resStat) {
+              if (resStat.error()) {
+                log('voximplant.statistic.get ERRO (fallback)', resStat.error());
+                finalizeHeader(null, null);
+                if (callback) callback(activityId);
+                return;
+              }
+
+              var statData = resStat.data();
+              log('voximplant.statistic.get SUCESSO (fallback)', statData);
+
+              if (!statData || !statData.length) {
+                finalizeHeader(null, null);
+                if (callback) callback(activityId);
+                return;
+              }
+
+              var row = statData[0];
+              var phone      = row.PHONE_NUMBER || null;
+              var entityType = row.CRM_ENTITY_TYPE || null; // CONTACT / COMPANY / LEAD
+              var entityId   = row.CRM_ENTITY_ID   || null;
+
+              // Se não tiver entidade, mostramos só telefone
+              if (!entityType || !entityId) {
+                log('Fallback telefonia sem entidade. Mostrando apenas telefone.', row);
+                finalizeHeader(null, phone);
+                if (callback) callback(activityId);
+                return;
+              }
+
+              // Descobre método correto
+              var method = null;
+              if (entityType === 'CONTACT') method = 'crm.contact.get';
+              else if (entityType === 'COMPANY') method = 'crm.company.get';
+              else if (entityType === 'LEAD') method = 'crm.lead.get';
+
+              if (!method) {
+                log('Tipo de entidade não suportado (fallback telefonia): ' + entityType);
+                finalizeHeader(null, phone);
+                if (callback) callback(activityId);
+                return;
+              }
+
+              BX24.callMethod(method, { id: entityId }, function(resEntity) {
+                if (resEntity.error()) {
+                  log(method + ' ERRO (fallback)', resEntity.error());
+                  finalizeHeader(null, phone);
+                } else {
+                  var entityData = resEntity.data();
+                  var name = buildContactNameFromEntity(entityData, entityType);
+                  log('Entidade carregada para cabeçalho (fallback telefonia) ' +
+                      '(' + entityType + ' #' + entityId + '): ' + name, entityData);
+                  finalizeHeader(name, phone);
+                }
+                if (callback) callback(activityId);
+              });
+            });
+          }
+        });
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Inicialização Bitrix24
+    // -----------------------------------------------------------------------
+    log('Script carregado, verificando BX24...');
+
+    if (typeof window.BX24 === 'undefined') {
+      log('ERRO: BX24 NÃO está definido. Esta página não está em contexto Bitrix ou o script api/v1 não carregou.');
+    } else {
+      log('BX24 encontrado, iniciando BX24.init...');
+      BX24.init(function () {
+        log('BX24.init OK. Pronto para usar API.');
+
+        var installBtn = document.getElementById('installBtn');
+        var refreshBtn = document.getElementById('refreshBtn');
+        var saveBtn    = document.getElementById('saveBtn');
+
+        // Esconde o botão azul até saber se é admin
+        installBtn.style.display = 'none';
+
+        // 1) Verifica admin para exibir botão de registrar CALL_CARD
+        getCurrentUserId(function (id) {
+          log('Pré-carregado CURRENT_USER_ID = ' + id);
+
+          if (BX24.isAdmin && BX24.isAdmin()) {
+            log('Usuário é admin. Exibindo botão de registrar CALL_CARD.');
+            installBtn.style.display = 'block';
+
+            installBtn.onclick = function () {
+              var handlerUrl = getHandlerUrl();
+              log('Clique no botão instalar. Tentando limpar handler anterior para CALL_CARD...');
+
+              BX24.callMethod('placement.unbind', {
+                PLACEMENT: 'CALL_CARD'
+              }, function (resUnbind) {
+                if (resUnbind.error()) {
+                  log('placement.unbind ERRO (vou tentar bind mesmo assim)', resUnbind.error());
+                } else {
+                  log('placement.unbind SUCESSO', resUnbind.data());
+                }
+
+                log('Chamando placement.bind com HANDLER = ' + handlerUrl);
+                BX24.callMethod('placement.bind', {
+                  PLACEMENT: 'CALL_CARD',
+                  HANDLER: handlerUrl,
+                  TITLE: 'Resultado da chamada',
+                  DESCRIPTION: 'Classificação de cada ligação'
+                }, function (resBind) {
+                  if (resBind.error()) {
+                    log('placement.bind ERRO', resBind.error());
+                    alert('Erro ao registrar no CALL_CARD: ' + resBind.error());
+                  } else {
+                    log('placement.bind SUCESSO', resBind.data());
+                    alert('Aplicação registrada / atualizada no cartão de chamadas com sucesso!');
+                  }
+                });
+              });
+            };
+          } else {
+            log('Usuário NÃO é admin. Botão de registrar CALL_CARD ficará oculto.');
+          }
+        });
+
+        // 2) Carrega cabeçalho ao abrir
+        loadLastCallAndHeader(function (activityId) {
+          log('Cabeçalho inicial carregado com atividade ID = ' + activityId);
+        });
+
+        // 3) Botão de atualizar manualmente a última ligação
+        refreshBtn.onclick = function () {
+          log('Botão Atualizar última ligação clicado.');
+          loadLastCallAndHeader(function (activityId) {
+            log('Atualização manual concluída. Atividade ID = ' + activityId);
+          });
+        };
+
+        // 4) Auto-refresh a cada 2 minutos (opcional, pode comentar se não quiser)
+        setInterval(function () {
+          log('Auto-refresh (2min) da última ligação concluída...');
+          loadLastCallAndHeader(function (activityId) {
+            log('Auto-refresh atualizado. Atividade ID = ' + activityId);
+          });
+        }, 120000); // 120.000 ms = 2 minutos
+
+        // 5) BOTÃO VERDE – salva o status na MESMA ligação exibida no cabeçalho
+        saveBtn.onclick = function () {
+          var result = document.getElementById('callResult').value;
+          if (!result) {
+            alert('Selecione um resultado antes de salvar.');
+            return;
+          }
+
+          log('Clique no botão salvar. Iniciando processo de classificação...');
+          log('O status será aplicado na mesma ligação exibida no cabeçalho.');
+
+          // Garante que estamos usando a última call concluída atualizada
+          loadLastCallAndHeader(function (activityId) {
+            if (!activityId) {
+              alert('Não foi possível localizar a última ligação concluída para salvar o status.');
+              return;
+            }
+
+            var statusDescription = result;
+
+            log('Aplicando status na atividade ID = ' + activityId);
+            log('Nova descrição a salvar: ' + statusDescription);
+
+            BX24.callMethod('crm.activity.update', {
+              id: activityId,
+              fields: {
+                RESULT_VALUE: result,
+                DESCRIPTION: statusDescription
+              }
+            }, function (resUpdate) {
+              if (resUpdate.error()) {
+                log('crm.activity.update ERRO', resUpdate.error());
+                alert('Erro ao salvar status da ligação: ' + resUpdate.error());
+              } else {
+                log('crm.activity.update SUCESSO', resUpdate.data());
+                alert('Status da ligação salvo com sucesso na última chamada concluída deste usuário!');
+              }
+            });
+          });
+        };
+
+      });
+    }
+  </script>
+</body>
+</html>
